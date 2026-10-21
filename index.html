@@ -1643,6 +1643,7 @@ document.addEventListener('DOMContentLoaded', function(){
   <span id="auth-user-name" style="font-size:12px;color:rgba(255,255,255,.5);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
   <div style="display:flex;gap:6px;flex-shrink:0">
     <button id="auth-admin-btn" onclick="openUserMgmt()" style="display:none;background:rgba(255,255,255,.1);border:none;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:11px;color:rgba(255,255,255,.7)">👥 관리</button>
+    <button id="data-mgmt-btn" onclick="openDataMgmt()" style="display:none;background:rgba(255,255,255,.1);border:none;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:11px;color:rgba(255,255,255,.7)">📊 데이터</button>
     <button onclick="authLogout()" style="background:rgba(255,255,255,.1);border:none;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:11px;color:rgba(255,255,255,.7)">로그아웃</button>
   </div>
 </div>
@@ -2349,7 +2350,10 @@ function _authShowApp() {
   if(nameEl) nameEl.textContent = (AUTH_USER.name||'') + ' (' + (AUTH_USER.role==='admin'?'관리자':'열람자') + ')';
   var adminBtn = $id('auth-admin-btn');
   if(adminBtn && AUTH_USER.role==='admin') adminBtn.style.display='';
+  var dataMgmtBtn = $id('data-mgmt-btn');
+  if(dataMgmtBtn && AUTH_USER.role==='admin') dataMgmtBtn.style.display='';
   CAL_EDIT_UNLOCKED = (AUTH_USER.role === 'admin');
+  if(typeof loadAppDataFromFirebase==='function') loadAppDataFromFirebase();
   if(CAL_EDIT_UNLOCKED) { sessionStorage.setItem('calUnlocked','1'); } else { sessionStorage.removeItem('calUnlocked'); }
   updateCalLockBtn();
 }
@@ -4059,6 +4063,40 @@ else{jdBuildAllPage();['1월','2월','3월','4월','5월'].forEach(jdBuildMonthP
 // 전역 노출 (renderHoibyeol 등 외부 스크립트에서 접근 가능하도록)
 window.JD=JD;window.JD_MW=JD_MW;
 })();
+</script>
+<script>
+// ============ Firebase appData 연동 ============
+function _fbArrToArr(v){
+  if(!v)return[];
+  if(Array.isArray(v))return v;
+  if(typeof v==='object'){
+    return Object.keys(v).sort(function(a,b){return+a-+b;}).map(function(k){
+      return(v[k]&&typeof v[k]==='object'&&!Array.isArray(v[k]))?_fbArrToArr(v[k]):v[k];
+    });
+  }
+  return[];
+}
+function _normalizeBCD(bcd){
+  var r={};
+  Object.keys(bcd).forEach(function(dept){
+    var d=bcd[dept];
+    r[dept]={c:d.c,month:d.month,knowhow:d.knowhow||'',
+      members:_fbArrToArr(d.members).map(function(m){return _fbArrToArr(m);}),
+      student:_fbArrToArr(d.student),
+      steps:_fbArrToArr(d.steps).map(function(s){return _fbArrToArr(s);}),
+      tags:_fbArrToArr(d.tags)};
+  });
+  return r;
+}
+async function loadAppDataFromFirebase(){
+  try{
+    var snap=await DB.ref('appData').once('value');
+    var d=snap.val();
+    if(!d)return;
+    if(d.bcd&&Object.keys(d.bcd).length>0){window.BCD=_normalizeBCD(d.bcd);}
+    if(d.jd&&Object.keys(d.jd).length>0){window.JD=d.jd;if(d.jdMW)window.JD_MW=d.jdMW;}
+  }catch(e){console.warn('appData load failed:',e);}
+}
 </script>
 
 
@@ -5871,4 +5909,245 @@ function renderSchedulePopup(){
   </div>
 </div>
 
+<div id="data-mgmt-modal" onclick="if(event.target===this)closeDataMgmt()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10001;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border-radius:16px;width:600px;max-width:96vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 16px 64px rgba(0,0,0,.3)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div style="font-size:15px;font-weight:700;color:var(--text)">📊 데이터 관리</div>
+      <button onclick="closeDataMgmt()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
+    </div>
+    <div style="display:flex;border-bottom:1px solid var(--border);padding:0 12px;flex-shrink:0">
+      <button id="dm-tab-bcd" onclick="dataMgmtShowTab('bcd')" style="background:none;border:none;border-bottom:2px solid var(--blue);padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--blue)">전도 대상자</button>
+      <button id="dm-tab-jd" onclick="dataMgmtShowTab('jd')" style="background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">주간 통계</button>
+      <button id="dm-tab-upload" onclick="dataMgmtShowTab('upload')" style="background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">초기 설정</button>
+    </div>
+    <div id="dm-panel-bcd" style="overflow-y:auto;flex:1;padding:16px 20px">
+      <button id="dm-bcd-add-btn" onclick="editBCDEntry('')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:12px">+ 새 항목 추가</button>
+      <div id="dm-bcd-list"></div>
+      <div id="dm-bcd-form" style="display:none">
+        <div style="font-size:14px;font-weight:700;margin-bottom:12px;color:var(--text)" id="dm-bcd-form-title"></div>
+        <div id="dm-bcd-form-content"></div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button onclick="saveBCDEntry()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:700">저장</button>
+          <button onclick="cancelBCDForm()" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px;color:var(--text)">취소</button>
+        </div>
+      </div>
+    </div>
+    <div id="dm-panel-jd" style="display:none;overflow-y:auto;flex:1;padding:16px 20px">
+      <div id="dm-jd-list"></div>
+      <button onclick="showJDAddForm()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-top:12px">+ 새 주차 추가</button>
+      <div id="dm-jd-add-form" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">새 주차 입력</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input id="dm-jd-week-name" placeholder="주차명 (예: 6월 1주)" style="flex:1;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          <input id="dm-jd-date-range" placeholder="날짜범위 (예: 6/1~6/6)" style="flex:1;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+        </div>
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">요일별 실적 <button onclick="addJDDayRow('')" style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:12px;margin-left:6px">+ 추가</button></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;display:flex;gap:5px;padding:0 2px"><span style="min-width:42px">요일</span><span style="min-width:70px">날짜</span><span style="min-width:67px">면대면</span><span style="min-width:67px">줌/전화</span><span style="min-width:67px">인도순</span></div>
+        <div id="dm-jd-days"></div>
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 4px">부서별 실적 <button onclick="addJDDeptRow('')" style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:12px;margin-left:6px">+ 추가</button></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px;display:flex;gap:5px;padding:0 2px"><span style="min-width:80px">부서</span><span style="min-width:72px">등록인원</span><span style="min-width:82px">면대면평균</span><span style="min-width:82px">줌인도평균</span></div>
+        <div id="dm-jd-depts"></div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button onclick="saveJDWeek()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:700">저장</button>
+          <button onclick="hideJDAddForm()" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px;color:var(--text)">취소</button>
+        </div>
+      </div>
+    </div>
+    <div id="dm-panel-upload" style="display:none;overflow-y:auto;flex:1;padding:16px 20px">
+      <div style="background:rgba(212,138,10,.1);border:1px solid #d48a0a;border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text);line-height:1.7">
+        <strong>⚡ 초기 설정 안내</strong><br>
+        처음 Firebase 데이터 관리를 시작할 때, 현재 파일에 내장된 기본 데이터를 Firebase에 업로드하세요.<br>
+        이 작업은 <strong>한 번만</strong> 하면 됩니다. 이후에는 위 탭에서 직접 추가·수정·삭제할 수 있습니다.
+      </div>
+      <button id="dm-upload-btn" onclick="uploadInitialData()" style="background:#18a974;color:#fff;border:none;border-radius:10px;padding:12px 24px;cursor:pointer;font-size:14px;font-weight:700;width:100%;margin-bottom:10px">Firebase에 초기 데이터 업로드</button>
+      <div style="font-size:12px;color:var(--text2);text-align:center">전도 대상자(BCD), 주간 통계(JD) 데이터가 Firebase에 저장됩니다.</div>
+    </div>
+  </div>
+</div>
+<script>
+// ============ 데이터 관리 JS ============
+function openDataMgmt(){if(!AUTH_USER||AUTH_USER.role!=='admin')return;$id('data-mgmt-modal').style.display='flex';dataMgmtShowTab('bcd');}
+function closeDataMgmt(){$id('data-mgmt-modal').style.display='none';}
+function dataMgmtShowTab(tab){
+  ['bcd','jd','upload'].forEach(function(t){
+    var btn=$id('dm-tab-'+t),panel=$id('dm-panel-'+t);
+    if(btn){btn.style.borderBottomColor=t===tab?'var(--blue)':'transparent';btn.style.color=t===tab?'var(--blue)':'var(--text2)';}
+    if(panel)panel.style.display=t===tab?'':'none';
+  });
+  if(tab==='bcd')renderBCDList();
+  if(tab==='jd')renderJDList();
+}
+function renderBCDList(){
+  var el=$id('dm-bcd-list');if(!el)return;
+  var depts=Object.keys(window.BCD||{});
+  if(!depts.length){el.innerHTML='<div style="color:var(--text2);padding:12px 0;font-size:13px">항목이 없습니다. 초기 설정 탭에서 데이터를 업로드해주세요.</div>';return;}
+  var cm={pink:'#e85d89',blue:'#2d7ef6',green:'#18a974',purple:'#7253e0',amber:'#d48a0a',teal:'#0f9faa'};
+  el.innerHTML=depts.map(function(dept){
+    var d=window.BCD[dept],c=cm[d.c]||'#2d7ef6';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">'
+      +'<span style="width:8px;height:8px;border-radius:50%;background:'+c+';flex-shrink:0;display:inline-block"></span>'
+      +'<div style="flex:1"><div style="font-size:14px;font-weight:600;color:var(--text)">'+dept+'</div>'
+      +'<div style="font-size:12px;color:var(--text2)">'+(d.month||'')+' · '+(d.student?d.student[0]:'?')+'</div></div>'
+      +'<button onclick="editBCDEntry(''+dept+'')" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;color:var(--text)">수정</button>'
+      +'<button onclick="deleteBCDEntry(''+dept+'')" style="background:none;border:none;cursor:pointer;font-size:16px">🗑️</button>'
+      +'</div>';
+  }).join('');
+}
+function _dmIS(){return 'padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none;box-sizing:border-box;';}
+function editBCDEntry(dept){
+  var d=(window.BCD||{})[dept]||{};
+  var st=d.student||[];
+  var sHtml=((d.steps)||[]).map(function(s){
+    return '<div class="dm-step-row" style="display:flex;gap:5px;margin-bottom:5px">'
+      +'<input placeholder="단계명" value="'+(s[0]||'').replace(/"/g,'&quot;')+'" style="width:100px;'+_dmIS()+'">'
+      +'<input placeholder="내용" value="'+(s[1]||'').replace(/"/g,'&quot;')+'" style="flex:1;'+_dmIS()+'">'
+      +'<button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button></div>';
+  }).join('');
+  var mHtml=((d.members)||[]).map(function(m){
+    return '<div class="dm-member-row" style="display:flex;gap:5px;margin-bottom:5px">'
+      +'<input placeholder="역할" value="'+(m[0]||'').replace(/"/g,'&quot;')+'" style="width:65px;'+_dmIS()+'">'
+      +'<input placeholder="이름" value="'+(m[1]||'').replace(/"/g,'&quot;')+'" style="width:75px;'+_dmIS()+'">'
+      +'<input placeholder="컨셉" value="'+(m[2]||'').replace(/"/g,'&quot;')+'" style="flex:1;'+_dmIS()+'">'
+      +'<button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button></div>';
+  }).join('');
+  var cOpts=['pink','blue','green','purple','amber','teal'].map(function(c){return '<option value="'+c+'"'+(d.c===c?' selected':'')+'>'+c+'</option>';}).join('');
+  $id('dm-bcd-form-title').textContent=dept?'수정: '+dept:'새 항목 추가';
+  $id('dm-bcd-form-content').innerHTML=
+    '<input id="dm-bcd-dept" placeholder="부서명" value="'+dept+'" style="'+_dmIS()+'margin-bottom:8px;width:100%">'
+    +'<div style="display:flex;gap:8px;margin-bottom:8px"><select id="dm-bcd-color" style="'+_dmIS()+'">'+cOpts+'</select>'
+    +'<input id="dm-bcd-month" placeholder="월 (예: 신 43(2026)년 5월)" value="'+(d.month||'')+'" style="flex:1;'+_dmIS()+'"></div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px">수강생</div>'
+    +'<div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">'
+    +'<input id="dm-st-name" placeholder="이름" value="'+(st[0]||'')+'" style="width:80px;'+_dmIS()+'">'
+    +'<input id="dm-st-gender" placeholder="성별" value="'+(st[1]||'')+'" style="width:48px;'+_dmIS()+'">'
+    +'<input id="dm-st-age" placeholder="나이" value="'+(st[2]||'')+'" style="width:60px;'+_dmIS()+'">'
+    +'<input id="dm-st-method" placeholder="방법" value="'+(st[3]||'')+'" style="width:60px;'+_dmIS()+'">'
+    +'<input id="dm-st-situation" placeholder="상황" value="'+(st[4]||'')+'" style="flex:1;min-width:130px;'+_dmIS()+'"></div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px">팀원 <button onclick="addMemberRow()" style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:12px">+ 추가</button></div>'
+    +'<div id="dm-members">'+mHtml+'</div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin:8px 0 5px">단계 <button onclick="addStepRow()" style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:12px">+ 추가</button></div>'
+    +'<div id="dm-steps">'+sHtml+'</div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin:8px 0 5px">노하우</div>'
+    +'<textarea id="dm-bcd-knowhow" rows="3" style="'+_dmIS()+'width:100%;resize:vertical">'+(d.knowhow||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</textarea>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin:8px 0 5px">태그 (쉼표로 구분)</div>'
+    +'<input id="dm-bcd-tags" value="'+((d.tags||[]).join(', '))+'" style="'+_dmIS()+'width:100%">'
+    +'<input type="hidden" id="dm-bcd-orig-dept" value="'+dept+'">';
+  $id('dm-bcd-form').style.display='';$id('dm-bcd-list').style.display='none';$id('dm-bcd-add-btn').style.display='none';
+}
+function addMemberRow(){
+  var d=document.createElement('div');d.className='dm-member-row';d.style.cssText='display:flex;gap:5px;margin-bottom:5px';
+  d.innerHTML='<input placeholder="역할" style="width:65px;'+_dmIS()+'"><input placeholder="이름" style="width:75px;'+_dmIS()+'"><input placeholder="컨셉" style="flex:1;'+_dmIS()+'"><button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button>';
+  $id('dm-members').appendChild(d);
+}
+function addStepRow(){
+  var d=document.createElement('div');d.className='dm-step-row';d.style.cssText='display:flex;gap:5px;margin-bottom:5px';
+  d.innerHTML='<input placeholder="단계명" style="width:100px;'+_dmIS()+'"><input placeholder="내용" style="flex:1;'+_dmIS()+'"><button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button>';
+  $id('dm-steps').appendChild(d);
+}
+function cancelBCDForm(){$id('dm-bcd-form').style.display='none';$id('dm-bcd-list').style.display='';$id('dm-bcd-add-btn').style.display='';}
+async function saveBCDEntry(){
+  var dept=($id('dm-bcd-dept').value||'').trim(),origDept=$id('dm-bcd-orig-dept').value;
+  if(!dept){alert('부서명을 입력해주세요.');return;}
+  var members=Array.from($qsa('#dm-members .dm-member-row')).map(function(row){var i=row.querySelectorAll('input');return[i[0].value,i[1].value,i[2].value];});
+  var steps=Array.from($qsa('#dm-steps .dm-step-row')).map(function(row){var i=row.querySelectorAll('input');return[i[0].value,i[1].value];});
+  var entry={c:$id('dm-bcd-color').value,month:$id('dm-bcd-month').value,members:members,
+    student:[$id('dm-st-name').value,$id('dm-st-gender').value,$id('dm-st-age').value,$id('dm-st-method').value,$id('dm-st-situation').value],
+    steps:steps,knowhow:$id('dm-bcd-knowhow').value,
+    tags:$id('dm-bcd-tags').value.split(',').map(function(t){return t.trim();}).filter(Boolean)};
+  try{
+    if(origDept&&origDept!==dept)await DB.ref('appData/bcd/'+origDept).remove();
+    await DB.ref('appData/bcd/'+dept).set(entry);
+    window.BCD=window.BCD||{};if(origDept&&origDept!==dept)delete window.BCD[origDept];
+    window.BCD[dept]=entry;alert('저장되었습니다.');cancelBCDForm();renderBCDList();
+  }catch(e){alert('저장 실패: '+e.message);}
+}
+async function deleteBCDEntry(dept){
+  if(!confirm(dept+' 항목을 삭제하시겠습니까?'))return;
+  try{await DB.ref('appData/bcd/'+dept).remove();delete window.BCD[dept];renderBCDList();}
+  catch(e){alert('삭제 실패: '+e.message);}
+}
+function renderJDList(){
+  var el=$id('dm-jd-list');if(!el)return;
+  var weeks=Object.keys(window.JD||{});
+  el.innerHTML=!weeks.length
+    ?'<div style="color:var(--text2);font-size:13px;padding:12px 0">데이터 없음. 초기 설정 탭에서 업로드하거나 새 주차를 추가하세요.</div>'
+    :'<div style="font-size:12px;color:var(--text2);margin-bottom:8px">총 '+weeks.length+'주 ('+weeks[0]+' ~ '+weeks[weeks.length-1]+')</div>'
+    +'<div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:0 12px">'
+    +weeks.map(function(w){var d=window.JD[w];return'<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">'
+      +'<span style="flex:1;font-size:13px;color:var(--text)">'+w+' <span style="color:var(--text2);font-size:11px">'+(d&&d.date_range||'')+'</span></span>'
+      +'<button onclick="deleteJDWeek(''+w+'')" style="background:none;border:none;cursor:pointer;font-size:15px">🗑️</button></div>';
+    }).join('')+'</div>';
+}
+async function deleteJDWeek(week){
+  if(!confirm(week+' 데이터를 삭제하시겠습니까?'))return;
+  try{
+    await DB.ref('appData/jd/'+week).remove();delete window.JD[week];
+    var mon=week.split(' ')[0];
+    if(window.JD_MW&&window.JD_MW[mon]){window.JD_MW[mon]=window.JD_MW[mon].filter(function(w){return w!==week;});await DB.ref('appData/jdMW').set(window.JD_MW);}
+    renderJDList();alert(week+' 삭제 완료. 새로고침 후 반영됩니다.');
+  }catch(e){alert('삭제 실패: '+e.message);}
+}
+function showJDAddForm(){
+  $id('dm-jd-add-form').style.display='';$id('dm-jd-days').innerHTML='';$id('dm-jd-depts').innerHTML='';
+  ['월','화','금','토'].forEach(function(dow){addJDDayRow(dow);});
+  ['교회교역','신학부','장로회','자문회','장년회','부녀회','청년회'].forEach(function(d){addJDDeptRow(d);});
+}
+function hideJDAddForm(){$id('dm-jd-add-form').style.display='none';}
+function addJDDayRow(dow){
+  var d=document.createElement('div');d.style.cssText='display:flex;gap:5px;margin-bottom:5px;align-items:center';
+  d.innerHTML='<input placeholder="요일" value="'+(dow||'')+'" style="width:42px;'+_dmIS()+'">'
+    +'<input placeholder="날짜(1/6)" style="width:68px;'+_dmIS()+'">'
+    +'<input placeholder="면대면" type="number" style="width:65px;'+_dmIS()+'">'
+    +'<input placeholder="줌/전화" type="number" style="width:65px;'+_dmIS()+'">'
+    +'<input placeholder="인도순" type="number" style="width:65px;'+_dmIS()+'">'
+    +'<button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button>';
+  $id('dm-jd-days').appendChild(d);
+}
+function addJDDeptRow(name){
+  var d=document.createElement('div');d.style.cssText='display:flex;gap:5px;margin-bottom:5px;align-items:center';
+  d.innerHTML='<input placeholder="부서" value="'+(name||'')+'" style="width:78px;'+_dmIS()+'">'
+    +'<input placeholder="등록인원" type="number" style="width:70px;'+_dmIS()+'">'
+    +'<input placeholder="면대면평균" type="number" step="0.1" style="width:80px;'+_dmIS()+'">'
+    +'<input placeholder="줌인도평균" type="number" step="0.1" style="width:80px;'+_dmIS()+'">'
+    +'<button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px">✕</button>';
+  $id('dm-jd-depts').appendChild(d);
+}
+async function saveJDWeek(){
+  var wn=($id('dm-jd-week-name').value||'').trim(),dr=($id('dm-jd-date-range').value||'').trim();
+  if(!wn){alert('주차명을 입력해주세요 (예: 6월 1주)');return;}
+  var dayRows=$id('dm-jd-days').children,day_totals=[],tF=0,tZ=0,tI=0;
+  for(var i=0;i<dayRows.length;i++){
+    var inp=dayRows[i].querySelectorAll('input');
+    var f=+inp[2].value||0,z=+inp[3].value||0,s=+inp[4].value||0,tot=f+z+s;
+    tF+=f;tZ+=z;tI+=s;day_totals.push({dow:inp[0].value,date:inp[1].value,face:f,zoom:z,insisun:s,rate:tot?f/tot:0});
+  }
+  var deptRows=$id('dm-jd-depts').children,dept_data=[],gT=0,gF=0,gZ=0;
+  for(var j=0;j<deptRows.length;j++){
+    var di=deptRows[j].querySelectorAll('input');
+    var t2=+di[1].value||0,fa=+di[2].value||0,za=+di[3].value||0;
+    gT+=t2;gF+=fa;gZ+=za;dept_data.push({dept:di[0].value,total:t2,face_avg:fa,zoom_insisun_avg:za,rate:t2?(fa+za)*day_totals.length/t2:0});
+  }
+  var nd=day_totals.length;
+  var wd={date_range:dr,day_totals:day_totals,dept_data:dept_data,
+    grand:{total:gT,face_avg:nd?gF/nd:0,zoom_insisun_avg:nd?gZ/nd:0,rate:gT?(tF+tZ+tI)/(gT*nd):0},num_days:nd};
+  try{
+    await DB.ref('appData/jd/'+wn).set(wd);window.JD[wn]=wd;
+    var mon=wn.split(' ')[0];window.JD_MW=window.JD_MW||{};window.JD_MW[mon]=window.JD_MW[mon]||[];
+    if(window.JD_MW[mon].indexOf(wn)===-1){window.JD_MW[mon].push(wn);await DB.ref('appData/jdMW').set(window.JD_MW);}
+    alert(wn+' 저장 완료!\n새로고침 후 통계 페이지에 반영됩니다.');hideJDAddForm();renderJDList();
+  }catch(e){alert('저장 실패: '+e.message);}
+}
+async function uploadInitialData(){
+  if(!confirm('현재 파일에 내장된 기본 데이터를 Firebase에 업로드합니다.\n이미 데이터가 있으면 덮어씁니다. 계속하시겠습니까?'))return;
+  var btn=$id('dm-upload-btn');btn.textContent='업로드 중...';btn.disabled=true;
+  try{
+    await DB.ref('appData/bcd').set(window.BCD);
+    await DB.ref('appData/jd').set(window.JD);
+    await DB.ref('appData/jdMW').set(window.JD_MW);
+    btn.textContent='✅ 업로드 완료!';
+    setTimeout(function(){btn.textContent='Firebase에 초기 데이터 업로드';btn.disabled=false;},3000);
+    alert('초기 데이터 업로드 완료!\n이후 수정은 전도 대상자·주간 통계 탭에서 하시면 됩니다.');
+  }catch(e){btn.textContent='Firebase에 초기 데이터 업로드';btn.disabled=false;alert('업로드 실패: '+e.message);}
+}
+</script>
 </body></html>
