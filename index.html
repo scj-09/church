@@ -2297,6 +2297,26 @@ function _authSetError(msg) {
 
 // 임시 관리자 코드 (1111-1111-111) — Firebase 연결 불가 시 로컬 인증용
 var _LOCAL_ADMIN_HASH = '96229288ccea69255b222b564d72eca650ac5ee102172000c85d5d6fe11db88f';
+// 로컬 사용자 관리 (Firebase 미연결 시 localStorage 사용)
+var _LOCAL_USERS_KEY = 'localUsers_v1';
+function _getLocalUsers() {
+  try { return JSON.parse(localStorage.getItem(_LOCAL_USERS_KEY)||'{}'); } catch(e) { return {}; }
+}
+function _saveLocalUser(hash, data) {
+  var u=_getLocalUsers(); u[hash]=data;
+  try { localStorage.setItem(_LOCAL_USERS_KEY, JSON.stringify(u)); } catch(e) {}
+}
+function _updateLocalUser(hash, updates) {
+  var u=_getLocalUsers(); if(!u[hash]) return;
+  Object.assign(u[hash], updates);
+  try { localStorage.setItem(_LOCAL_USERS_KEY, JSON.stringify(u)); } catch(e) {}
+}
+async function _fbConnected() {
+  return Promise.race([
+    DB.ref('.info/connected').once('value').then(function(s){return s.val()===true;}),
+    new Promise(function(r){setTimeout(function(){r(false);},3000);})
+  ]);
+}
 
 async function authTryLogin() {
   var code = ($id('login-code-input').value||'').trim();
@@ -2311,6 +2331,14 @@ async function authTryLogin() {
     if(hash === _LOCAL_ADMIN_HASH) {
       localStorage.setItem('authUid', 'local-admin');
       AUTH_USER = {uid:'local-admin', role:'admin', name:'관리자', hash:hash};
+      _authShowApp(); return;
+    }
+    // 로컬 사용자 확인
+    var localUsers = _getLocalUsers();
+    if(localUsers[hash] && localUsers[hash].active) {
+      var lu = localUsers[hash];
+      localStorage.setItem('authUid', 'local-'+hash.slice(0,8));
+      AUTH_USER = {uid:'local-'+hash.slice(0,8), role:lu.role, name:lu.name, hash:hash};
       _authShowApp(); return;
     }
     // Firebase 확인 (10초 타임아웃)
@@ -2347,6 +2375,18 @@ async function authRestoreSession() {
     if(uid === 'local-admin') {
       AUTH_USER = {uid:'local-admin', role:'admin', name:'관리자', hash:_LOCAL_ADMIN_HASH};
       _authShowApp(); return;
+    }
+    // 로컬 사용자 세션 복원
+    if(uid.startsWith('local-')) {
+      var localUsers = _getLocalUsers();
+      var matchEntry = Object.entries(localUsers).find(function(e){ return 'local-'+e[0].slice(0,8)===uid && e[1].active; });
+      if(matchEntry) {
+        var lu = matchEntry[1];
+        AUTH_USER = {uid:uid, role:lu.role, name:lu.name, hash:matchEntry[0]};
+        _authShowApp(); return;
+      }
+      localStorage.removeItem('authUid');
+      $id('login-overlay').style.display='flex'; return;
     }
     try {
       var snap = await Promise.race([
@@ -2403,26 +2443,41 @@ function openUserMgmt() {
 }
 function closeUserMgmt(){ var m=$id('user-mgmt-modal'); if(m) m.style.display='none'; }
 
+function _renderUserRow(hash, u, isLocal) {
+  var badge = u.role==='admin'
+    ? '<span style="background:var(--blue-dim);color:var(--blue);border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700">관리자</span>'
+    : '<span style="background:var(--bg3);color:var(--text2);border-radius:4px;padding:2px 6px;font-size:11px">열람자</span>';
+  var actClr = u.active ? 'var(--green)' : 'var(--text3)';
+  var localBadge = isLocal ? '<span style="background:var(--amber-dim);color:var(--amber);border-radius:4px;padding:2px 5px;font-size:10px;margin-left:4px">로컬</span>' : '';
+  return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">'
+    +'<div style="flex:1"><div style="font-size:14px;font-weight:600">'+u.name+localBadge+'</div>'
+    +'<div style="font-size:11px;color:var(--text3);font-family:DM Mono,monospace">'+hash.slice(0,16)+'...</div></div>'
+    +badge+'<span style="font-size:11px;color:'+actClr+'">'+(u.active?'활성':'중지')+'</span>'
+    +'<button onclick="toggleUserActive(\''+hash+'\','+(!u.active)+','+isLocal+')" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px;color:var(--text2)">'+(u.active?'중지':'복구')+'</button>'
+    +'</div>';
+}
+
 async function loadUserList() {
   var list = $id('user-mgmt-list'); if(!list) return;
   list.innerHTML = '<div style="color:var(--text2);font-size:13px;padding:12px 0">불러오는 중...</div>';
-  var snap = await DB.ref('users').once('value');
-  var users = snap.val()||{};
-  var rows = Object.entries(users).map(function(e){
-    var hash=e[0], u=e[1];
-    var badge = u.role==='admin'
-      ? '<span style="background:var(--blue-dim);color:var(--blue);border-radius:4px;padding:2px 6px;font-size:11px;font-weight:700">관리자</span>'
-      : '<span style="background:var(--bg3);color:var(--text2);border-radius:4px;padding:2px 6px;font-size:11px">열람자</span>';
-    var actLbl = u.active ? '활성' : '중지';
-    var actClr = u.active ? 'var(--green)' : 'var(--text3)';
-    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">'
-      +'<div style="flex:1"><div style="font-size:14px;font-weight:600">'+u.name+'</div>'
-      +'<div style="font-size:11px;color:var(--text3);font-family:DM Mono,monospace">'+hash.slice(0,16)+'...</div></div>'
-      +badge+'<span style="font-size:11px;color:'+actClr+'">'+actLbl+'</span>'
-      +'<button onclick="toggleUserActive(\''+hash+'\','+(!u.active)+')" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px;color:var(--text2)">'+(u.active?'중지':'복구')+'</button>'
-      +'</div>';
-  });
-  list.innerHTML = rows.length ? rows.join('') : '<div style="color:var(--text2);font-size:13px;padding:12px 0">등록된 사용자가 없습니다.</div>';
+  var rows = [];
+  // 로컬 사용자 표시
+  var localUsers = _getLocalUsers();
+  Object.entries(localUsers).forEach(function(e){ rows.push(_renderUserRow(e[0], e[1], true)); });
+  // Firebase 사용자 표시 (연결된 경우)
+  var connected = await _fbConnected();
+  var fbBanner = connected ? '' : '<div style="font-size:12px;color:var(--amber);background:var(--amber-dim);padding:8px 12px;border-radius:8px;margin-bottom:8px">⚠️ Firebase 미연결 — 로컬 사용자만 관리됩니다. Firebase 연결 시 동기화됩니다.</div>';
+  if(connected) {
+    try {
+      var snap = await Promise.race([
+        DB.ref('users').once('value'),
+        new Promise(function(_,rej){setTimeout(function(){rej(new Error('T'));},8000);})
+      ]);
+      var fbUsers = snap.val()||{};
+      Object.entries(fbUsers).forEach(function(e){ rows.push(_renderUserRow(e[0], e[1], false)); });
+    } catch(e) {}
+  }
+  list.innerHTML = fbBanner + (rows.length ? rows.join('') : '<div style="color:var(--text2);font-size:13px;padding:12px 0">등록된 사용자가 없습니다.</div>');
 }
 
 async function addUser() {
@@ -2430,20 +2485,41 @@ async function addUser() {
   if(!name){alert('이름을 입력해주세요.');return;}
   if(!/^[\d-]{4,20}$/.test(code)||code.replace(/-/g,'').length<4){alert('올바른 코드를 입력해주세요. (숫자와 대시)');return;}
   var hash = await _sha256(code);
-  var existing = (await DB.ref('users/'+hash).once('value')).val();
-  if(existing){alert('이미 등록된 코드입니다.');return;}
-  await DB.ref('users/'+hash).set({name:name, role:role, active:true, createdAt:Date.now()});
+  var localUsers = _getLocalUsers();
+  if(localUsers[hash]){alert('이미 등록된 코드입니다.');return;}
+  var connected = await _fbConnected();
+  if(connected) {
+    try {
+      var existing = (await Promise.race([
+        DB.ref('users/'+hash).once('value'),
+        new Promise(function(_,rej){setTimeout(function(){rej(new Error('T'));},5000);})
+      ])).val();
+      if(existing){alert('이미 등록된 코드입니다.');return;}
+      await DB.ref('users/'+hash).set({name:name, role:role, active:true, createdAt:Date.now()});
+      alert(name+'님이 Firebase에 등록되었습니다.');
+    } catch(e) { connected=false; }
+  }
+  if(!connected) {
+    _saveLocalUser(hash, {name:name, role:role, active:true, createdAt:Date.now()});
+    alert(name+'님이 로컬에 등록되었습니다.\n(Firebase 연결 시 동기화 가능)');
+  }
   $id('new-user-name').value=''; $id('new-user-code').value='';
-  alert(name+'님이 등록되었습니다.'); loadUserList();
+  loadUserList();
 }
 
-async function toggleUserActive(hash, active) {
-  await DB.ref('users/'+hash+'/active').set(active);
-  if(!active) {
-    var sessions=(await DB.ref('sessions').once('value')).val()||{};
-    var updates={};
-    Object.entries(sessions).forEach(function(e){ if(e[1].hash===hash) updates['sessions/'+e[0]+'/active']=false; });
-    if(Object.keys(updates).length) await DB.ref().update(updates);
+async function toggleUserActive(hash, active, isLocal) {
+  if(isLocal) {
+    _updateLocalUser(hash, {active:active});
+  } else {
+    try {
+      await DB.ref('users/'+hash+'/active').set(active);
+      if(!active) {
+        var sessions=(await DB.ref('sessions').once('value')).val()||{};
+        var updates={};
+        Object.entries(sessions).forEach(function(e){ if(e[1].hash===hash) updates['sessions/'+e[0]+'/active']=false; });
+        if(Object.keys(updates).length) await DB.ref().update(updates);
+      }
+    } catch(e) { alert('Firebase 오류: '+e.message); }
   }
   loadUserList();
 }
