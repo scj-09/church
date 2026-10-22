@@ -2295,6 +2295,9 @@ function _authSetError(msg) {
   if(el) el.textContent = msg;
 }
 
+// 임시 관리자 코드 (1111-1111-111) — Firebase 연결 불가 시 로컬 인증용
+var _LOCAL_ADMIN_HASH = '96229288ccea69255b222b564d72eca650ac5ee102172000c85d5d6fe11db88f';
+
 async function authTryLogin() {
   var code = ($id('login-code-input').value||'').trim();
   if(!/^[\d-]{4,20}$/.test(code)||code.replace(/-/g,'').length<4) { _authSetError('올바른 코드를 입력해주세요. (숫자와 대시만 가능)'); return; }
@@ -2304,7 +2307,17 @@ async function authTryLogin() {
   _authSetLoading(true); _authSetError('');
   try {
     var hash = await _sha256(code);
-    var snap = await DB.ref('users/'+hash).once('value');
+    // 로컬 관리자 코드 확인 (Firebase 없이 동작)
+    if(hash === _LOCAL_ADMIN_HASH) {
+      localStorage.setItem('authUid', 'local-admin');
+      AUTH_USER = {uid:'local-admin', role:'admin', name:'관리자', hash:hash};
+      _authShowApp(); return;
+    }
+    // Firebase 확인 (10초 타임아웃)
+    var snap = await Promise.race([
+      DB.ref('users/'+hash).once('value'),
+      new Promise(function(_,rej){setTimeout(function(){rej(new Error('TIMEOUT'));},10000);})
+    ]);
     var userData = snap.val();
     if(!userData || !userData.active) {
       _authSetError('코드가 올바르지 않거나 사용 중지된 코드입니다.');
@@ -2319,14 +2332,27 @@ async function authTryLogin() {
     localStorage.setItem('authUid', uid);
     AUTH_USER = {uid:uid, role:userData.role, name:userData.name, hash:hash};
     _authShowApp();
-  } catch(e) { _authSetError('오류가 발생했습니다. 다시 시도해주세요.'); _authSetLoading(false); }
+  } catch(e) {
+    var msg = (e.message==='TIMEOUT')
+      ? 'Firebase 서버에 연결할 수 없습니다. 네트워크를 확인하거나 잠시 후 다시 시도해주세요.'
+      : '오류가 발생했습니다. 다시 시도해주세요.';
+    _authSetError(msg); _authSetLoading(false);
+  }
 }
 
 async function authRestoreSession() {
   var uid = localStorage.getItem('authUid');
   if(uid) {
+    // 로컬 관리자 세션 복원
+    if(uid === 'local-admin') {
+      AUTH_USER = {uid:'local-admin', role:'admin', name:'관리자', hash:_LOCAL_ADMIN_HASH};
+      _authShowApp(); return;
+    }
     try {
-      var snap = await DB.ref('sessions/'+uid).once('value');
+      var snap = await Promise.race([
+        DB.ref('sessions/'+uid).once('value'),
+        new Promise(function(_,rej){setTimeout(function(){rej(new Error('TIMEOUT'));},8000);})
+      ]);
       var session = snap.val();
       if(session && session.active && session.expiresAt > Date.now()) {
         var userSnap = await DB.ref('users/'+session.hash).once('value');
