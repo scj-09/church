@@ -6112,6 +6112,7 @@ function renderSchedulePopup(){
     <div style="display:flex;border-bottom:1px solid var(--border);padding:0 12px;flex-shrink:0">
       <button id="dm-tab-bcd" onclick="dataMgmtShowTab('bcd')" style="background:none;border:none;border-bottom:2px solid var(--blue);padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--blue)">전도 대상자</button>
       <button id="dm-tab-jd" onclick="dataMgmtShowTab('jd')" style="background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">주간 통계</button>
+      <button id="dm-tab-gangang" onclick="dataMgmtShowTab('gangang')" style="background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">개강 업로드</button>
       <button id="dm-tab-upload" onclick="dataMgmtShowTab('upload')" style="background:none;border:none;border-bottom:2px solid transparent;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2)">초기 설정</button>
     </div>
     <div id="dm-panel-bcd" style="overflow-y:auto;flex:1;padding:16px 20px">
@@ -6152,6 +6153,39 @@ function renderSchedulePopup(){
         </div>
       </div>
     </div>
+    <!-- 개강 업로드 패널 -->
+    <div id="dm-panel-gangang" style="display:none;overflow-y:auto;flex:1;padding:16px 20px">
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+        <strong style="color:var(--text)">취합_일일전도활동결과</strong> 파일을 올리면 주차별 개강현황이 자동으로 업데이트됩니다.
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+        <label style="font-size:13px;font-weight:600;color:var(--text2);white-space:nowrap">개강 월:</label>
+        <select id="dm-gg-month" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          <option value="2월">2월 개강</option>
+          <option value="3월">3월 개강</option>
+          <option value="4월">4월 개강</option>
+          <option value="5월">5월 개강</option>
+          <option value="6월">6월 개강</option>
+          <option value="7월">7월 개강</option>
+          <option value="8월">8월 개강</option>
+          <option value="9월">9월 개강</option>
+          <option value="10월">10월 개강</option>
+        </select>
+        <label style="font-size:13px;font-weight:600;color:var(--text2);white-space:nowrap">주차:</label>
+        <select id="dm-gg-week" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none">
+          <option value="0주차">0주차</option>
+          <option value="1주차">1주차</option>
+          <option value="2주차">2주차</option>
+          <option value="3주차">3주차</option>
+          <option value="4주차">4주차</option>
+          <option value="5주차">5주차</option>
+          <option value="6주차">6주차</option>
+        </select>
+      </div>
+      <button onclick="showGangangExcelUpload()" style="background:#18a974;color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:600;margin-bottom:14px">📤 취합 파일 선택</button>
+      <input type="file" id="dm-gg-file" style="display:none" accept=".xlsx,.xls" onchange="gangangFileSelected(this)">
+      <div id="dm-gg-preview" style="display:none;border:1px solid #18a974;border-radius:10px;padding:14px;background:rgba(24,169,116,.05)"></div>
+    </div>
     <div id="dm-panel-upload" style="display:none;overflow-y:auto;flex:1;padding:16px 20px">
       <div style="background:rgba(212,138,10,.1);border:1px solid #d48a0a;border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text);line-height:1.7">
         <strong>⚡ 초기 설정 안내</strong><br>
@@ -6168,7 +6202,7 @@ function renderSchedulePopup(){
 function openDataMgmt(){if(!AUTH_USER||AUTH_USER.role!=='admin')return;$id('data-mgmt-modal').style.display='flex';dataMgmtShowTab('bcd');}
 function closeDataMgmt(){$id('data-mgmt-modal').style.display='none';}
 function dataMgmtShowTab(tab){
-  ['bcd','jd','upload'].forEach(function(t){
+  ['bcd','jd','gangang','upload'].forEach(function(t){
     var btn=$id('dm-tab-'+t),panel=$id('dm-panel-'+t);
     if(btn){btn.style.borderBottomColor=t===tab?'var(--blue)':'transparent';btn.style.color=t===tab?'var(--blue)':'var(--text2)';}
     if(panel)panel.style.display=t===tab?'':'none';
@@ -6506,6 +6540,130 @@ async function _saveJDFromExcel(){
     if(window.JD_MW[mon].indexOf(wn)===-1){window.JD_MW[mon].push(wn);await DB.ref('appData/jdMW').set(window.JD_MW);}
     el.style.display='none';el._jdWd=null;
     renderJDList();alert(wn+' 저장 완료!\n새로고침 후 통계 페이지에 반영됩니다.');
+  }catch(e){alert('저장 실패: '+e.message);}
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── 개강현황 취합 파일 업로드 ───────────────────────────────────────────────
+function showGangangExcelUpload(){
+  $id('dm-gg-file').click();
+}
+function gangangFileSelected(inp){
+  var f=inp.files[0];if(!f)return;
+  if(typeof XLSX==='undefined'){alert('XLSX 라이브러리가 로드되지 않았습니다. 잠시 후 다시 시도해주세요.');return;}
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+    _parseGangangFromExcel(wb,f.name);
+  };
+  reader.readAsArrayBuffer(f);
+  inp.value='';
+}
+function _parseGangangFromExcel(wb,filename){
+  var ws=wb.Sheets['일자별'];
+  if(!ws){alert('[일자별] 시트를 찾을 수 없습니다.\n취합_일일전도활동결과 파일을 선택해주세요.');return;}
+  var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+  // Row2: 활동기간
+  var dateText=rows[1]&&rows[1][0]?String(rows[1][0]).replace('활동기간 : ','').trim():'';
+  // 취합 파일 부서명 → DEPT_DATA 키 매핑 ('장로회'는 서인천 합계에만 포함)
+  var deptMap={'교회교역':'중진교역','신학부':'신학부','자문회':'자문회','장년회':'장년회','부녀회':'부녀회','청년회':'청년회'};
+  var deptData={};
+  var inSection=false;
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    if(!row||row.every(function(v){return v===null||v===undefined;}))continue;
+    var c0=row[0],c2=row[2];
+    if(c0==='교회 계'){inSection=true;continue;}
+    if(!inSection)continue;
+    if(c0==='계'&&(c2===null||c2===undefined)){
+      // 전체 합계 행 → 서인천
+      deptData['서인천']={f:+(row[7]||0),h:+(row[9]||0),s:+(row[10]||0),b:+(row[14]||0)};
+      break;
+    }
+    if(c2&&deptMap[c2]){
+      deptData[deptMap[c2]]={f:+(row[7]||0),h:+(row[9]||0),s:+(row[10]||0),b:+(row[14]||0)};
+    }
+  }
+  if(!deptData['서인천']&&Object.keys(deptData).length>0){
+    // 서인천 합계 직접 계산
+    var tf=0,th=0,ts=0,tb=0;
+    Object.values(deptData).forEach(function(d){tf+=d.f;th+=d.h;ts+=d.s;tb+=d.b;});
+    deptData['서인천']={f:tf,h:th,s:ts,b:tb};
+  }
+  window._gangangParsed={dateText:dateText,deptData:deptData};
+  _showGangangExcelPreview(dateText,deptData);
+}
+function _showGangangExcelPreview(dateText,deptData){
+  var monthKey=$id('dm-gg-month').value;
+  var weekName=$id('dm-gg-week').value;
+  var preview=$id('dm-gg-preview');
+  var depts=['중진교역','신학부','자문회','장년회','부녀회','청년회'];
+  var html='<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">📊 파싱 결과 미리보기</div>';
+  html+='<div style="font-size:12px;color:var(--text2);margin-bottom:4px">활동기간: '+dateText+'</div>';
+  html+='<div style="font-size:12px;color:var(--text2);margin-bottom:10px">저장위치: <strong style="color:var(--blue)">'+monthKey+' 개강 / '+weekName+'</strong></div>';
+  html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+  html+='<thead><tr style="background:var(--bg3)"><th style="padding:6px 10px;text-align:left;font-weight:700">부서</th>';
+  ['찾기','합자','섭외','복음방'].forEach(function(l){html+='<th style="padding:6px 8px;text-align:center;font-weight:700">'+l+'</th>';});
+  html+='</tr></thead><tbody>';
+  depts.forEach(function(d){
+    var dd=deptData[d]||{f:0,h:0,s:0,b:0};
+    html+='<tr><td style="padding:5px 10px;border-bottom:1px solid var(--border)">'+d+'</td>';
+    [dd.f,dd.h,dd.s,dd.b].forEach(function(v){html+='<td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border)">'+v+'</td>';});
+    html+='</tr>';
+  });
+  var sd=deptData['서인천']||{f:0,h:0,s:0,b:0};
+  html+='<tr style="font-weight:700;background:var(--bg3)"><td style="padding:6px 10px">전체</td>';
+  [sd.f,sd.h,sd.s,sd.b].forEach(function(v){html+='<td style="padding:6px 8px;text-align:center">'+v+'</td>';});
+  html+='</tr></tbody></table></div>';
+  html+='<div style="display:flex;gap:8px;margin-top:12px">';
+  html+='<button onclick="_saveGangangFromExcel()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:700">✅ 저장</button>';
+  html+='<button onclick="$id(\'dm-gg-preview\').style.display=\'none\'" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px;color:var(--text)">취소</button>';
+  html+='</div>';
+  preview.innerHTML=html;
+  preview.style.display='block';
+}
+async function _saveGangangFromExcel(){
+  var parsed=window._gangangParsed;
+  if(!parsed){alert('파싱된 데이터가 없습니다.');return;}
+  var monthKey=$id('dm-gg-month').value;
+  var weekName=$id('dm-gg-week').value;
+  var parsedDepts=parsed.deptData;
+  if(!window.DEPT_DATA){window.DEPT_DATA={};}
+  if(!window.DEPT_DATA[monthKey]){
+    if(!confirm(monthKey+' 개강 데이터가 없습니다. 새로 생성하시겠습니까?'))return;
+    var newMo={weeks:[],서인천:{f:0,ft:0,h:0,ht:0,s:0,st:0,b:0,bt:0,z:0,r:0,rt:0,c:0,ct:0,w:{},za:0}};
+    ['중진교역','신학부','자문회','장년회','부녀회','청년회'].forEach(function(d){newMo[d]={f:0,ft:0,h:0,ht:0,s:0,st:0,b:0,bt:0,z:0,r:0,rt:0,c:0,ct:0,w:{},za:0};});
+    window.DEPT_DATA[monthKey]=newMo;
+  }
+  var mo=window.DEPT_DATA[monthKey];
+  if(mo.weeks.indexOf(weekName)===-1){mo.weeks.push(weekName);mo.weeks.sort();}
+  // 각 부서 주차 데이터 업데이트
+  var allDepts=['중진교역','신학부','자문회','장년회','부녀회','청년회'];
+  allDepts.forEach(function(d){
+    if(!mo[d])mo[d]={f:0,ft:0,h:0,ht:0,s:0,st:0,b:0,bt:0,z:0,r:0,rt:0,c:0,ct:0,w:{},za:0};
+    if(!mo[d].w)mo[d].w={};
+    var pd=parsedDepts[d]||{f:0,h:0,s:0,b:0};
+    var ex=mo[d].w[weekName]||{};
+    mo[d].w[weekName]={f:pd.f,h:pd.h,s:pd.s,b:pd.b,ft:ex.ft||0,ht:ex.ht||0,st:ex.st||0,bt:ex.bt||0};
+    // 합계 재계산
+    var tf=0,th=0,ts=0,tb=0;
+    Object.values(mo[d].w).forEach(function(w){tf+=+(w.f||0);th+=+(w.h||0);ts+=+(w.s||0);tb+=+(w.b||0);});
+    mo[d].f=tf;mo[d].h=th;mo[d].s=ts;mo[d].b=tb;
+  });
+  // 서인천(전체) 업데이트
+  if(!mo['서인천'])mo['서인천']={f:0,ft:0,h:0,ht:0,s:0,st:0,b:0,bt:0,z:0,r:0,rt:0,c:0,ct:0,w:{},za:0};
+  if(!mo['서인천'].w)mo['서인천'].w={};
+  var seo=parsedDepts['서인천']||{f:0,h:0,s:0,b:0};
+  var exSeo=mo['서인천'].w[weekName]||{};
+  mo['서인천'].w[weekName]={f:seo.f,h:seo.h,s:seo.s,b:seo.b,ft:exSeo.ft||0,ht:exSeo.ht||0,st:exSeo.st||0,bt:exSeo.bt||0};
+  var sf=0,sh=0,ss=0,sb=0;
+  Object.values(mo['서인천'].w).forEach(function(w){sf+=+(w.f||0);sh+=+(w.h||0);ss+=+(w.s||0);sb+=+(w.b||0);});
+  mo['서인천'].f=sf;mo['서인천'].h=sh;mo['서인천'].s=ss;mo['서인천'].b=sb;
+  try{
+    await DB.ref('appData/gangangData/'+monthKey).set(mo);
+    alert('✅ '+monthKey+' 개강 '+weekName+' 데이터가 저장되었습니다!');
+    $id('dm-gg-preview').style.display='none';
+    window._gangangParsed=null;
   }catch(e){alert('저장 실패: '+e.message);}
 }
 // ─────────────────────────────────────────────────────────────────────────────
