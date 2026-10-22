@@ -6359,79 +6359,98 @@ async function showJDExcelUpload(){
 }
 
 function _parseJDFromExcel(wb,filename){
+  // 전도대참석현황 파일 파싱
+  // 컬럼: 일자(0) 요일(1) 부서(2) 전도재적(3) 대면(4) 줌오전(5) 줌저녁(6) 인시선(7) 기타(8) 참석률(9) 평균대면(10) 평균줌(11)
   var ws=wb.Sheets['일자별'];
-  if(!ws){alert('[일자별] 시트를 찾을 수 없습니다.\n취합_일일전도활동결과 파일을 선택해주세요.');return;}
-  var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
-  // raw:false → dates as strings; but cellDates:true so Date objects for date cells
-  // Re-read with raw:true for numbers
+  if(!ws){alert('[일자별] 시트를 찾을 수 없습니다.\n전도대참석현황 파일을 선택해주세요.');return;}
   var rawRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
 
-  // Row index 1: "활동기간 : 신43(2026). 10. 14. (수) ~ 신43(2026). 10. 20. (화)"
-  var periodText=rows[1]&&rows[1][0]?String(rows[1][0]):'';
-  var dm=periodText.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*\(.\)[^~]+~[^0-9]*(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+  // Row 1: "활동기간 : 신43(2026). 10. 12. (월) ~ 10. 17. (토)"
+  var periodText=rawRows[1]&&rawRows[1][0]?String(rawRows[1][0]):'';
+  // 날짜 파싱: "10. 12." 형태
+  var dm=periodText.match(/(\d{1,2})\.\s*(\d{1,2})\.[^~]+~[^0-9]*(\d{1,2})\.\s*(\d{1,2})\./);
   var startMon=0,startDay=0,endMon=0,endDay=0;
-  if(dm){startMon=+dm[1];startDay=+dm[2];endMon=+dm[4];endDay=+dm[5];}
-  var dateRange=startMon?(startMon+'/'+startDay+'~'+endMon+'/'+endDay):'';
-  // 주차: ceil(startDay/7) 기준, but use end week = ceil(endDay/7)
-  var weekNum=endMon?Math.ceil(endDay/7):1;
-  var suggestWeek=startMon?(startMon+'월 '+weekNum+'주'):'';
+  if(dm){startMon=+dm[1];startDay=+dm[2];endMon=+dm[3];endDay=+dm[4];}
 
-  // Parse data rows (index 5+)
-  var dayTotals=[],deptStats={};
+  // 실제 활동 날짜는 데이터에서 직접 파싱 (날짜 셀이 더 정확)
+  var dayTotals=[];
+  var deptData=[];
+  var grandRow=null;
   var curDateStr=null,curDow=null;
+  var inSumSection=false; // '서인천 계' 섹션 여부
   var DEPTS=['교회교역','신학부','장로회','자문회','장년회','부녀회','청년회'];
 
-  for(var i=5;i<rawRows.length;i++){
+  for(var i=4;i<rawRows.length;i++){
     var row=rawRows[i];
     if(!row||row.every(function(v){return v===null||v===undefined;}))continue;
     var c0=row[0],c1=row[1],c2=row[2];
 
-    // Date cell (excel serial → date)
-    if(c0!==null&&c0!=='계'&&typeof c0==='number'&&c2!==null&&c2!=='계'){
-      // c0 is excel date serial
-      var d=XLSX.SSF.parse_date_code(c0);
-      if(d)curDateStr=(d.m)+'/'+d.d;
-      if(c1)curDow=c1;
-    } else if(c0!==null&&c0!=='계'&&c0 instanceof Date){
-      curDateStr=(c0.getMonth()+1)+'/'+(c0.getDate());
-      if(c1)curDow=c1;
-    }
+    // '서인천 계' 섹션 감지
+    if(c0==='서인천 계'){inSumSection=true;}
 
-    if(c0==='계'&&(c2===null||c2===undefined)){
-      // 일별 합계 행: col3=재적, col5=활동자, col6=활동률, col7=찾기, col10=섭외
-      var workers=+(row[5]||0),rate=+(row[6]||0),finds=+(row[7]||0),recruit=+(row[10]||0);
-      if(workers>0){
-        dayTotals.push({dow:curDow,date:curDateStr,face:workers,zoom:finds,insisun:recruit,rate:Math.round(rate*10000)/10000});
+    if(!inSumSection){
+      // 날짜 행 감지 (엑셀 시리얼 숫자)
+      if(c0!==null&&c0!=='계'&&typeof c0==='number'&&c0>40000){
+        var d=XLSX.SSF.parse_date_code(c0);
+        if(d){curDateStr=d.m+'/'+d.d;}
+        if(c1)curDow=c1;
       }
-    }
-
-    if(c2&&c2!=='계'&&c0!=='계'){
-      // 부서행
-      var dept=c2;
-      if(!deptStats[dept])deptStats[dept]={total:0,workers:[],rates:[],recruit:[]};
-      deptStats[dept].total=+(row[3]||0);
-      deptStats[dept].workers.push(+(row[5]||0));
-      deptStats[dept].rates.push(+(row[6]||0));
-      deptStats[dept].recruit.push(+(row[10]||0));
+      // 일별 합계 행: c0='계', c2=null
+      if(c0==='계'&&(c2===null||c2===undefined)){
+        var face=+(row[4]||0);
+        var zoom=(+(row[5]||0))+(+(row[6]||0)); // 줌오전+줌저녁
+        var insisun=+(row[7]||0);
+        var rate=+(row[9]||0);
+        if(face>0||zoom>0||insisun>0){
+          dayTotals.push({dow:curDow,date:curDateStr,face:face,zoom:zoom,insisun:insisun,rate:Math.round(rate*10000)/10000});
+        }
+      }
+    } else {
+      // '서인천 계' 섹션: 부서별 평균
+      if(c2&&c2!=='계'&&DEPTS.indexOf(c2)>-1){
+        deptData.push({
+          dept:c2,
+          total:+(row[3]||0),
+          face_avg:Math.round((+(row[10]||0))*10)/10,
+          zoom_insisun_avg:Math.round((+(row[11]||0))*10)/10,
+          rate:Math.round((+(row[9]||0))*10000)/10000
+        });
+      }
+      // 전체 계 행
+      if(c0==='계'&&(c2===null||c2===undefined)){
+        grandRow=row;
+      }
     }
   }
 
-  // Dept data averages (활동한 날만)
-  var deptData=[],grandTotal=0,grandFace=0,grandZoom=0;
-  DEPTS.forEach(function(dept){
-    var s=deptStats[dept];if(!s)return;
-    var active=s.workers.filter(function(v){return v>0;}).length||1;
-    var faceAvg=s.workers.reduce(function(a,b){return a+b;},0)/active;
-    var zoomAvg=s.recruit.reduce(function(a,b){return a+b;},0)/active;
-    var rateAvg=s.rates.filter(function(v){return v>0;}).reduce(function(a,b){return a+b;},0)/(s.rates.filter(function(v){return v>0;}).length||1);
-    grandTotal+=s.total;grandFace+=faceAvg;grandZoom+=zoomAvg;
-    deptData.push({dept:dept,total:s.total,face_avg:Math.round(faceAvg*10)/10,zoom_insisun_avg:Math.round(zoomAvg*10)/10,rate:Math.round(rateAvg*10000)/10000});
-  });
+  // 날짜범위: 실제 활동일 기준
+  var firstDate=dayTotals.length?dayTotals[0].date:'';
+  var lastDate=dayTotals.length?dayTotals[dayTotals.length-1].date:'';
+  var dateRange=firstDate&&lastDate?(firstDate+'~'+lastDate):(startMon?(startMon+'/'+startDay+'~'+endMon+'/'+endDay):'');
 
-  var nd=dayTotals.length;
-  var wd={date_range:dateRange,day_totals:dayTotals,dept_data:deptData,
-    grand:{total:grandTotal,face_avg:nd?Math.round(grandFace/nd*10)/10:0,zoom_insisun_avg:nd?Math.round(grandZoom/nd*10)/10:0,
-      rate:grandTotal&&nd?dayTotals.reduce(function(s,d){return s+d.face;},0)/(grandTotal*nd):0},num_days:nd};
+  // 주차 자동 추천: 첫 활동일 기준 ceil(day/7)
+  var suggestWeek='';
+  if(firstDate){
+    var fp=firstDate.split('/');
+    var fMon=+fp[0],fDay=+fp[1];
+    suggestWeek=fMon+'월 '+Math.ceil(fDay/7)+'주';
+  } else if(startMon){
+    suggestWeek=startMon+'월 '+Math.ceil(startDay/7)+'주';
+  }
+
+  var nd=dayTotals.length||1;
+  var grandTotal=grandRow?+(grandRow[3]||0):945;
+  var grandFaceAvg=grandRow?+(grandRow[10]||0):0;
+  var grandZoomAvg=grandRow?+(grandRow[11]||0):0;
+  var grandRate=grandRow?+(grandRow[9]||0):0;
+
+  var wd={
+    date_range:dateRange,
+    day_totals:dayTotals,
+    dept_data:deptData,
+    grand:{total:grandTotal,face_avg:grandFaceAvg,zoom_insisun_avg:grandZoomAvg,rate:Math.round(grandRate*10000)/10000},
+    num_days:nd
+  };
 
   _showJDExcelPreview(suggestWeek,wd);
 }
@@ -6456,15 +6475,15 @@ function _showJDExcelPreview(suggestWeek,wd){
     +'<label style="font-size:12px;color:var(--text2);white-space:nowrap">주차명</label>'
     +'<input id="dm-jd-excel-weekname" value="'+suggestWeek+'" placeholder="예: 10월 3주" style="'+_IS+';flex:1">'
     +'<span style="font-size:12px;color:var(--text2)">날짜범위: '+wd.date_range+'</span></div>'
-    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">요일별 (활동자/찾기/섭외/활동률)</div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">요일별 (대면/줌/인시선/참석률)</div>'
     +'<table style="font-size:12px;width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr style="background:var(--bg3)">'
     +'<th style="padding:3px 6px;text-align:left">요일</th><th style="padding:3px 6px;text-align:left">날짜</th>'
-    +'<th style="padding:3px 6px">활동자</th><th style="padding:3px 6px">찾기</th><th style="padding:3px 6px">섭외</th><th style="padding:3px 6px">활동률</th>'
+    +'<th style="padding:3px 6px">대면</th><th style="padding:3px 6px">줌</th><th style="padding:3px 6px">인시선</th><th style="padding:3px 6px">참석률</th>'
     +'</tr></thead><tbody>'+dayRows+'</tbody></table>'
-    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">부서별 평균 (재적/평균활동자/활동률)</div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">부서별 평균 (재적/평균대면/참석률)</div>'
     +'<table style="font-size:12px;width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:var(--bg3)">'
     +'<th style="padding:3px 6px;text-align:left">부서</th><th style="padding:3px 6px">재적</th>'
-    +'<th style="padding:3px 6px">평균활동자</th><th style="padding:3px 6px">평균활동률</th>'
+    +'<th style="padding:3px 6px">평균대면</th><th style="padding:3px 6px">평균참석률</th>'
     +'</tr></thead><tbody>'+deptRows+'</tbody></table>'
     +'<div style="display:flex;gap:8px">'
     +'<button onclick="_saveJDFromExcel()" style="background:#18a974;color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:700">✅ 저장</button>'
