@@ -6128,7 +6128,12 @@ function renderSchedulePopup(){
     </div>
     <div id="dm-panel-jd" style="display:none;overflow-y:auto;flex:1;padding:16px 20px">
       <div id="dm-jd-list"></div>
-      <button onclick="showJDAddForm()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;margin-top:12px">+ 새 주차 추가</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button onclick="showJDAddForm()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">+ 새 주차 추가</button>
+        <button onclick="showJDExcelUpload()" style="background:#18a974;color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600">📤 취합 파일 업로드</button>
+      </div>
+      <!-- 취합 파일 업로드 미리보기 영역 -->
+      <div id="dm-jd-excel-preview" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:14px;border:1px solid #18a974;border-radius:10px;padding:14px;background:rgba(24,169,116,.05)"></div>
       <div id="dm-jd-add-form" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:14px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">새 주차 입력</div>
         <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -6331,6 +6336,161 @@ async function saveJDWeek(){
     alert(wn+' 저장 완료!\n새로고침 후 통계 페이지에 반영됩니다.');hideJDAddForm();renderJDList();
   }catch(e){alert('저장 실패: '+e.message);}
 }
+// ── 취합 엑셀 파일 → JD 업로드 ──────────────────────────────────────────────
+async function showJDExcelUpload(){
+  if(!window.XLSX){
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    await new Promise(function(res,rej){s.onload=res;s.onerror=function(){rej(new Error('SheetJS 로드 실패'));};document.head.appendChild(s);});
+  }
+  var inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls';
+  inp.onchange=function(e){
+    var file=e.target.files[0];if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var wb=XLSX.read(ev.target.result,{type:'array',cellDates:true});
+        _parseJDFromExcel(wb,file.name);
+      }catch(err){alert('파일 읽기 실패: '+err.message);}
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  inp.click();
+}
+
+function _parseJDFromExcel(wb,filename){
+  var ws=wb.Sheets['일자별'];
+  if(!ws){alert('[일자별] 시트를 찾을 수 없습니다.\n취합_일일전도활동결과 파일을 선택해주세요.');return;}
+  var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
+  // raw:false → dates as strings; but cellDates:true so Date objects for date cells
+  // Re-read with raw:true for numbers
+  var rawRows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:true});
+
+  // Row index 1: "활동기간 : 신43(2026). 10. 14. (수) ~ 신43(2026). 10. 20. (화)"
+  var periodText=rows[1]&&rows[1][0]?String(rows[1][0]):'';
+  var dm=periodText.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*\(.\)[^~]+~[^0-9]*(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+  var startMon=0,startDay=0,endMon=0,endDay=0;
+  if(dm){startMon=+dm[1];startDay=+dm[2];endMon=+dm[4];endDay=+dm[5];}
+  var dateRange=startMon?(startMon+'/'+startDay+'~'+endMon+'/'+endDay):'';
+  // 주차: ceil(startDay/7) 기준, but use end week = ceil(endDay/7)
+  var weekNum=endMon?Math.ceil(endDay/7):1;
+  var suggestWeek=startMon?(startMon+'월 '+weekNum+'주'):'';
+
+  // Parse data rows (index 5+)
+  var dayTotals=[],deptStats={};
+  var curDateStr=null,curDow=null;
+  var DEPTS=['교회교역','신학부','장로회','자문회','장년회','부녀회','청년회'];
+
+  for(var i=5;i<rawRows.length;i++){
+    var row=rawRows[i];
+    if(!row||row.every(function(v){return v===null||v===undefined;}))continue;
+    var c0=row[0],c1=row[1],c2=row[2];
+
+    // Date cell (excel serial → date)
+    if(c0!==null&&c0!=='계'&&typeof c0==='number'&&c2!==null&&c2!=='계'){
+      // c0 is excel date serial
+      var d=XLSX.SSF.parse_date_code(c0);
+      if(d)curDateStr=(d.m)+'/'+d.d;
+      if(c1)curDow=c1;
+    } else if(c0!==null&&c0!=='계'&&c0 instanceof Date){
+      curDateStr=(c0.getMonth()+1)+'/'+(c0.getDate());
+      if(c1)curDow=c1;
+    }
+
+    if(c0==='계'&&(c2===null||c2===undefined)){
+      // 일별 합계 행: col3=재적, col5=활동자, col6=활동률, col7=찾기, col10=섭외
+      var workers=+(row[5]||0),rate=+(row[6]||0),finds=+(row[7]||0),recruit=+(row[10]||0);
+      if(workers>0){
+        dayTotals.push({dow:curDow,date:curDateStr,face:workers,zoom:finds,insisun:recruit,rate:Math.round(rate*10000)/10000});
+      }
+    }
+
+    if(c2&&c2!=='계'&&c0!=='계'){
+      // 부서행
+      var dept=c2;
+      if(!deptStats[dept])deptStats[dept]={total:0,workers:[],rates:[],recruit:[]};
+      deptStats[dept].total=+(row[3]||0);
+      deptStats[dept].workers.push(+(row[5]||0));
+      deptStats[dept].rates.push(+(row[6]||0));
+      deptStats[dept].recruit.push(+(row[10]||0));
+    }
+  }
+
+  // Dept data averages (활동한 날만)
+  var deptData=[],grandTotal=0,grandFace=0,grandZoom=0;
+  DEPTS.forEach(function(dept){
+    var s=deptStats[dept];if(!s)return;
+    var active=s.workers.filter(function(v){return v>0;}).length||1;
+    var faceAvg=s.workers.reduce(function(a,b){return a+b;},0)/active;
+    var zoomAvg=s.recruit.reduce(function(a,b){return a+b;},0)/active;
+    var rateAvg=s.rates.filter(function(v){return v>0;}).reduce(function(a,b){return a+b;},0)/(s.rates.filter(function(v){return v>0;}).length||1);
+    grandTotal+=s.total;grandFace+=faceAvg;grandZoom+=zoomAvg;
+    deptData.push({dept:dept,total:s.total,face_avg:Math.round(faceAvg*10)/10,zoom_insisun_avg:Math.round(zoomAvg*10)/10,rate:Math.round(rateAvg*10000)/10000});
+  });
+
+  var nd=dayTotals.length;
+  var wd={date_range:dateRange,day_totals:dayTotals,dept_data:deptData,
+    grand:{total:grandTotal,face_avg:nd?Math.round(grandFace/nd*10)/10:0,zoom_insisun_avg:nd?Math.round(grandZoom/nd*10)/10:0,
+      rate:grandTotal&&nd?dayTotals.reduce(function(s,d){return s+d.face;},0)/(grandTotal*nd):0},num_days:nd};
+
+  _showJDExcelPreview(suggestWeek,wd);
+}
+
+function _showJDExcelPreview(suggestWeek,wd){
+  var el=$id('dm-jd-excel-preview');if(!el)return;
+  var dayRows=wd.day_totals.map(function(d){
+    return '<tr><td style="padding:3px 6px">'+d.dow+'</td><td style="padding:3px 6px">'+d.date+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+d.face+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+d.zoom+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+d.insisun+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+(d.rate*100).toFixed(1)+'%</td></tr>';
+  }).join('');
+  var deptRows=wd.dept_data.map(function(d){
+    return '<tr><td style="padding:3px 6px">'+d.dept+'</td><td style="padding:3px 6px;text-align:right">'+d.total+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+d.face_avg+'</td>'
+      +'<td style="padding:3px 6px;text-align:right">'+(d.rate*100).toFixed(1)+'%</td></tr>';
+  }).join('');
+  var _IS='padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none';
+  el.innerHTML='<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px">📊 취합 파일 미리보기</div>'
+    +'<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">'
+    +'<label style="font-size:12px;color:var(--text2);white-space:nowrap">주차명</label>'
+    +'<input id="dm-jd-excel-weekname" value="'+suggestWeek+'" placeholder="예: 10월 3주" style="'+_IS+';flex:1">'
+    +'<span style="font-size:12px;color:var(--text2)">날짜범위: '+wd.date_range+'</span></div>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">요일별 (활동자/찾기/섭외/활동률)</div>'
+    +'<table style="font-size:12px;width:100%;border-collapse:collapse;margin-bottom:10px"><thead><tr style="background:var(--bg3)">'
+    +'<th style="padding:3px 6px;text-align:left">요일</th><th style="padding:3px 6px;text-align:left">날짜</th>'
+    +'<th style="padding:3px 6px">활동자</th><th style="padding:3px 6px">찾기</th><th style="padding:3px 6px">섭외</th><th style="padding:3px 6px">활동률</th>'
+    +'</tr></thead><tbody>'+dayRows+'</tbody></table>'
+    +'<div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">부서별 평균 (재적/평균활동자/활동률)</div>'
+    +'<table style="font-size:12px;width:100%;border-collapse:collapse;margin-bottom:12px"><thead><tr style="background:var(--bg3)">'
+    +'<th style="padding:3px 6px;text-align:left">부서</th><th style="padding:3px 6px">재적</th>'
+    +'<th style="padding:3px 6px">평균활동자</th><th style="padding:3px 6px">평균활동률</th>'
+    +'</tr></thead><tbody>'+deptRows+'</tbody></table>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="_saveJDFromExcel()" style="background:#18a974;color:#fff;border:none;border-radius:8px;padding:9px 20px;cursor:pointer;font-size:13px;font-weight:700">✅ 저장</button>'
+    +'<button onclick="$id(\'dm-jd-excel-preview\').style.display=\'none\'" style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px;color:var(--text)">취소</button>'
+    +'</div>';
+  el.style.display='';
+  el.scrollIntoView({behavior:'smooth',block:'nearest'});
+  el._jdWd=wd;
+}
+
+async function _saveJDFromExcel(){
+  var el=$id('dm-jd-excel-preview');if(!el||!el._jdWd)return;
+  var wn=($id('dm-jd-excel-weekname').value||'').trim();
+  if(!wn){alert('주차명을 입력해주세요 (예: 10월 3주)');return;}
+  var wd=el._jdWd;
+  try{
+    await DB.ref('appData/jd/'+wn).set(wd);
+    window.JD=window.JD||{};window.JD[wn]=wd;
+    var mon=wn.split(' ')[0];window.JD_MW=window.JD_MW||{};window.JD_MW[mon]=window.JD_MW[mon]||[];
+    if(window.JD_MW[mon].indexOf(wn)===-1){window.JD_MW[mon].push(wn);await DB.ref('appData/jdMW').set(window.JD_MW);}
+    el.style.display='none';el._jdWd=null;
+    renderJDList();alert(wn+' 저장 완료!\n새로고침 후 통계 페이지에 반영됩니다.');
+  }catch(e){alert('저장 실패: '+e.message);}
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function uploadInitialData(){
   if(!confirm('현재 파일에 내장된 기본 데이터를 Firebase에 업로드합니다.\n이미 데이터가 있으면 덮어씁니다. 계속하시겠습니까?'))return;
   var btn=$id('dm-upload-btn');btn.textContent='업로드 중...';btn.disabled=true;
